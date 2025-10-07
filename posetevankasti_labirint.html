@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="sl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Poštevankasti labirint – 10 vrat & unikatni računi</title>
+<style>
+  :root { --tile: 40px; --panel:#fff; --text:#222; --accent:#4c7ef3; }
+  html, body { height: 100%; margin: 0; background:#eef3ff; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--text); }
+  .wrap { max-width: 980px; margin: 24px auto; padding: 0 16px; }
+  header { display:grid; grid-template-columns:1fr auto auto; gap:12px; align-items:center; margin-bottom:12px; }
+  h1 { margin:0; font-size:20px; font-weight:700; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  select, button, input[type="number"] { border: 1px solid #d7def0; background: var(--panel); padding: 8px 10px; border-radius: 10px; font-size: 14px; }
+  button { cursor:pointer; background:var(--accent); color:#fff; border:0; font-weight:600; }
+  #gameArea { display:grid; grid-template-columns:auto 260px; gap:16px; }
+  #canvasWrap, #sidebar { background:var(--panel); border:1px solid #e6ecfb; border-radius:14px; padding:12px; box-shadow:0 12px 28px rgba(44,76,145,.08); }
+  canvas { display:block; border-radius:10px; background:#f0f4ff; }
+  .tag { display:inline-block; padding:3px 8px; border-radius:999px; background:#eef3ff; border:1px solid #dde6ff; font-size:12px; }
+  .stat { font-size:14px; margin:8px 0; }
+  .legend { display:grid; grid-template-columns:18px 1fr; gap:8px 10px; align-items:center; margin-top:10px; }
+  .box { width:18px; height:18px; border-radius:4px; border:1px solid #cfd9f4; }
+  .player{background:#111}.wall{background:#8899cc}.door{background:#f7c948}.open{background:#ffe8a1}.exit{background:#2ab673}
+  .overlay{position:fixed; inset:0; display:none; align-items:center; justify-content:center; backdrop-filter: blur(3px); background:rgba(7,16,40,.45);}
+  .dialog{background:#fff; width:min(520px,92vw); border-radius:16px; padding:18px; border:1px solid #e8edfa; box-shadow:0 24px 60px rgba(0,0,0,.25);}
+  .dialog h2{margin:0 0 12px; font-size:18px;}
+  .dialog .row{display:flex; gap:10px;}
+  .dialog input[type=number]{flex:1; font-size:20px; padding:10px 12px; text-align:center;}
+  .toast{position:fixed; bottom:18px; left:50%; transform:translateX(-50%); background:#111; color:#fff; padding:10px 14px; border-radius:999px; opacity:0; transition:.25s; pointer-events:none; font-size:14px;}
+  .toast.show{opacity:1; transform:translateX(-50%) translateY(-6px);}
+  .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; border:1px solid #d9dff0; background:#f6f8ff; padding:1px 6px; border-radius:6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🧭 Poštevankasti labirint – 10 vrat</h1>
+    <div class="controls">
+      <label>Poštevanka:
+        <select id="tableSelect">
+          <option value="mix">Mešano</option>
+          <option value="2">× 2</option><option value="3">× 3</option><option value="4">× 4</option>
+          <option value="5">× 5</option><option value="6">× 6</option><option value="7">× 7</option>
+          <option value="8">× 8</option><option value="9">× 9</option><option value="10">× 10</option>
+        </select>
+      </label>
+      <label>Čas na vrata (s): <input id="timeLimit" type="number" min="0" step="5" value="20" style="width:70px"></label>
+      <button id="startBtn">Nova stopnja</button>
+      <button id="resetBtn">Ponastavi</button>
+    </div>
+  </header>
+
+  <div id="gameArea">
+    <div id="canvasWrap">
+      <canvas id="game" width="600" height="600"></canvas>
+    </div>
+    <aside id="sidebar">
+      <div class="tag">Navodila</div>
+      <p>Premikaj se s <span class="kbd">▲</span> <span class="kbd">▼</span> <span class="kbd">◄</span> <span class="kbd">►</span>.  
+      Vrata so na glavni poti – **ni obvozov**. Odpri vsa <strong>10</strong> vrat (vprašanja se ne ponavljajo), šele nato je **izhoda** mogoče doseči.</p>
+      <div class="tag">Stanje</div>
+      <div class="stat">Vrata odprta: <strong id="opened">0</strong>/<strong id="total">10</strong></div>
+      <div class="stat">Pravilno: <strong id="correct">0</strong></div>
+      <div class="stat">Napačno: <strong id="wrong">0</strong></div>
+      <div class="stat">Preostanek časa: <strong id="timer">–</strong></div>
+
+      <div class="tag" style="margin-top:10px;">Legenda</div>
+      <div class="legend">
+        <div class="box player"></div><div>Igralec</div>
+        <div class="box wall"></div><div>Zid</div>
+        <div class="box door"></div><div>Vrata (vprašanje)</div>
+        <div class="box open"></div><div>Odprta vrata</div>
+        <div class="box exit"></div><div>Izhod ⭐ (po vseh vratih)</div>
+      </div>
+      <p style="font-size:12px;color:#59627a;">Namig: čas 0 = brez odštevanja.</p>
+    </aside>
+  </div>
+</div>
+
+<!-- Dialog -->
+<div class="overlay" id="qOverlay" aria-hidden="true">
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="qTitle">
+    <h2 id="qTitle">Odpri vrata</h2>
+    <p id="qText">Koliko je 3 × 6?</p>
+    <div class="row">
+      <input type="number" id="answer" inputmode="numeric" placeholder="Odgovor" />
+      <button id="submitAnswer">Potrdi</button>
+    </div>
+    <p style="font-size:12px;color:#667;">Namig: Enter = potrditev.</p>
+  </div>
+</div>
+
+<div class="toast" id="toast">Bravo!</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const tile=40, N=15;
+  const elOpened=document.getElementById('opened'), elTotal=document.getElementById('total');
+  const elCorrect=document.getElementById('correct'), elWrong=document.getElementById('wrong'), elTimer=document.getElementById('timer');
+  const tableSel=document.getElementById('tableSelect'), timeLimit=document.getElementById('timeLimit');
+  const startBtn=document.getElementById('startBtn'), resetBtn=document.getElementById('resetBtn');
+  const overlay=document.getElementById('qOverlay'), qText=document.getElementById('qText'), ansInput=document.getElementById('answer'), submitAns=document.getElementById('submitAnswer');
+  const toast=document.getElementById('toast');
+  function showToast(m,ok=true){ toast.textContent=m; toast.style.background=ok?'#111':'#e34f4f'; toast.classList.add('show'); clearTimeout(showToast._t); showToast._t=setTimeout(()=>toast.classList.remove('show'),1200); }
+
+  let grid=[], player={x:1,y:1}, exit={x:N-2,y:N-2}, doors=[], correct=0, wrong=0;
+  let secondsLeft=0, doorTimer=null, paused=false, currentDoor=null;
+  let usedPairs=new Set(); // za unikatne račune
+
+  window.addEventListener('keydown', e=>{
+    if (paused) return;
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ e.preventDefault(); tryMove(e.key); }
+  });
+  submitAns.addEventListener('click', confirmAnswer);
+  ansInput.addEventListener('keydown', e=>{ if(e.key==='Enter') confirmAnswer(); });
+  startBtn.addEventListener('click', init);
+  resetBtn.addEventListener('click', init);
+
+  function generateMaze(){
+    grid = Array.from({length:N},()=>Array(N).fill(true));
+    function shuffle(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a;}
+    function carve(x,y){
+      grid[y][x]=false;
+      for(const [dx,dy] of shuffle([[2,0],[-2,0],[0,2],[0,-2]])){
+        const nx=x+dx, ny=y+dy;
+        if(nx>0&&ny>0&&nx<N-1&&ny<N-1&&grid[ny][nx]){
+          grid[y+dy/2][x+dx/2]=false; carve(nx,ny);
+        }
+      }
+    }
+    carve(1,1);
+  }
+  function shortestPath(start,goal){
+    const q=[start], came=Array.from({length:N},()=>Array(N).fill(null)), seen=Array.from({length:N},()=>Array(N).fill(false));
+    seen[start.y][start.x]=true;
+    while(q.length){
+      const cur=q.shift(); if(cur.x===goal.x&&cur.y===goal.y) break;
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nx=cur.x+dx, ny=cur.y+dy;
+        if(nx>=0&&ny>=0&&nx<N&&ny<N && !grid[ny][nx] && !seen[ny][nx]){
+          seen[ny][nx]=true; came[ny][nx]=cur; q.push({x:nx,y:ny});
+        }
+      }
+    }
+    const path=[]; let p=goal; if(!came[p.y][p.x]) return [];
+    while(!(p.x===start.x&&p.y===start.y)){ path.push(p); p=came[p.y][p.x]; } path.push(start); path.reverse(); return path;
+  }
+
+  function placeDoorsOnPath(path){
+    doors=[];
+    const DESIRED=10; // <-- to zahtevaš
+    const usable=path.slice(2, path.length-2);
+    const step=Math.max(1, Math.floor(usable.length / (DESIRED+1)));
+    for(let i=step; i<usable.length && doors.length<DESIRED; i+=step){
+      const {x,y}=usable[i];
+      doors.push({x,y,open:false, ...pickUniqueQuestion()});
+    }
+    // če slučajno ni dovolj, zapolni od zadaj
+    for(let i=usable.length-1; doors.length<DESIRED && i>=0; i--){
+      const {x,y}=usable[i];
+      if(!doors.some(d=>d.x===x&&d.y===y)) doors.push({x,y,open:false, ...pickUniqueQuestion()});
+    }
+    elTotal.textContent=String(DESIRED);
+    elOpened.textContent=String(doors.filter(d=>d.open).length);
+  }
+
+  // --- Unikatna vprašanja ---
+  function pickUniqueQuestion(){
+    const sel=tableSel.value;
+    // Zgradi seznam možnih parov za izbrano poštevanko
+    let pool=[];
+    if (sel==='mix'){
+      for(let a=2;a<=10;a++) for(let b=2;b<=10;b++) pool.push([a,b]);
+    } else {
+      const a=parseInt(sel,10);
+      for(let b=2;b<=10;b++) pool.push([a,b]);
+    }
+    // odstrani že uporabljene
+    pool = pool.filter(([a,b])=>!usedPairs.has(`${a}x${b}`));
+    // če zmanjka, resetiraj set (da se lahko ponovno uporabi po prehodu vseh)
+    if(pool.length===0){ usedPairs.clear(); return pickUniqueQuestion(); }
+    const [a,b] = pool[Math.floor(Math.random()*pool.length)];
+    usedPairs.add(`${a}x${b}`);
+    return {a,b,answer:a*b};
+  }
+
+  function doorAt(x,y){ return doors.find(d=>d.x===x && d.y===y); }
+
+  function tryMove(key){
+    const dir = {ArrowUp:[0,-1], ArrowDown:[0,1], ArrowLeft:[-1,0], ArrowRight:[1,0]}[key];
+    const nx=player.x+dir[0], ny=player.y+dir[1];
+    if (grid[ny]?.[nx]) return;
+    const d=doorAt(nx,ny);
+    if(d && !d.open){ askQuestion(d); return; }
+    player.x=nx; player.y=ny;
+    if(player.x===exit.x && player.y===exit.y){
+      if(doors.every(v=>v.open)){ showToast('Stopnja opravljena! ⭐'); setTimeout(()=>init(),180); }
+      else showToast('Najprej odpri vseh 10 vrat 🔐', false);
+    }
+    draw();
+  }
+
+  function askQuestion(door){
+    currentDoor=door; paused=true;
+    const limit=parseInt(timeLimit.value,10)||0; secondsLeft=limit;
+    qText.textContent=`Koliko je ${door.a} × ${door.b}?`;
+    overlay.style.display='flex'; overlay.setAttribute('aria-hidden','false');
+    ansInput.value=''; ansInput.focus();
+    if(limit>0){
+      elTimer.textContent=`${secondsLeft}s`;
+      doorTimer=setInterval(()=>{
+        secondsLeft--; elTimer.textContent=secondsLeft>0?`${secondsLeft}s`:'–';
+        if(secondsLeft<=0){ clearInterval(doorTimer); doorTimer=null; closeDialog(); wrong++; elWrong.textContent=wrong; showToast('Čas je potekel ⏳', false); draw(); }
+      },1000);
+    } else elTimer.textContent='–';
+  }
+
+  function confirmAnswer(){
+    if(!paused || !currentDoor) return;
+    const user=parseInt(ansInput.value,10);
+    if(user===currentDoor.answer){
+      currentDoor.open=true; correct++; elCorrect.textContent=correct;
+      elOpened.textContent=String(doors.filter(d=>d.open).length);
+      showToast('Bravo! ✅');
+      // stopi skozi
+      player.x=currentDoor.x; player.y=currentDoor.y;
+      // pripravi NOVO unikatno vprašanje za slučaj ponovnega srečanja (če bi resetirali)
+      Object.assign(currentDoor, {a:currentDoor.a,b:currentDoor.b,answer:currentDoor.answer});
+      closeDialog();
+      draw();
+    } else {
+      wrong++; elWrong.textContent=wrong;
+      showToast('Napačno ❌', false);
+      // ostani v dialogu, brez zaprtja
+      ansInput.select();
+    }
+  }
+
+  function closeDialog(){
+    overlay.style.display='none'; overlay.setAttribute('aria-hidden','true');
+    paused=false; if(doorTimer){ clearInterval(doorTimer); doorTimer=null; } elTimer.textContent='–'; currentDoor=null;
+  }
+
+  function star(cx, cy, spikes, innerR, outerR){
+    let rot=Math.PI/2*3, x=cx, y=cy; ctx.beginPath(); ctx.moveTo(cx, cy-outerR);
+    for(let i=0;i<spikes;i++){ x=cx+Math.cos(rot)*outerR; y=cy+Math.sin(rot)*outerR; ctx.lineTo(x,y); rot+=Math.PI/spikes;
+      x=cx+Math.cos(rot)*innerR; y=cy+Math.sin(rot)*innerR; ctx.lineTo(x,y); rot+=Math.PI/spikes; }
+    ctx.lineTo(cx, cy-outerR); ctx.closePath(); ctx.fill();
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#f7f9ff'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.strokeStyle='#e5ebff'; ctx.lineWidth=1;
+    for(let i=0;i<=N;i++){ ctx.beginPath(); ctx.moveTo(i*tile,0); ctx.lineTo(i*tile,N*tile); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0,i*tile); ctx.lineTo(N*tile,i*tile); ctx.stroke(); }
+    for(let y=0;y<N;y++){ for(let x=0;x<N;x++){ if(grid[y][x]){ ctx.fillStyle='#8899cc'; ctx.fillRect(x*tile+2,y*tile+2,tile-4,tile-4);} } }
+    doors.forEach(d=>{ ctx.fillStyle=d.open?'#ffe8a1':'#f7c948'; ctx.fillRect(d.x*tile+6,d.y*tile+6,tile-12,tile-12);
+      ctx.fillStyle='#b08300'; ctx.beginPath(); ctx.arc(d.x*tile+tile/2,d.y*tile+tile/2,5,0,Math.PI*2); ctx.fill(); });
+    const allOpen=doors.every(v=>v.open); ctx.fillStyle=allOpen?'#2ab673':'#8aa7a0';
+    ctx.fillRect(exit.x*tile+6, exit.y*tile+6, tile-12, tile-12); ctx.fillStyle='#fff'; star(exit.x*tile+tile/2, exit.y*tile+tile/2, 5, 6, 12);
+    ctx.fillStyle='#111'; ctx.fillRect(player.x*tile+8, player.y*tile+8, tile-16, tile-16);
+  }
+
+  function init(){
+    correct=0; wrong=0; elCorrect.textContent='0'; elWrong.textContent='0'; elOpened.textContent='0';
+    player={x:1,y:1}; exit={x:N-2,y:N-2}; if(doorTimer){ clearInterval(doorTimer); doorTimer=null; } paused=false; elTimer.textContent='–';
+    usedPairs.clear(); // reset unikatnosti za novo stopnjo
+    generateMaze();
+    const path=shortestPath(player, exit);
+    placeDoorsOnPath(path);
+    draw();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
